@@ -16,7 +16,7 @@
 
 #include QMK_KEYBOARD_H
 #include "keymap_user.h"
-#ifdef RGB_MATRIX_ENABLE
+#ifdef RGB_MATRIX_USER_ENABLE
 #    include "rgb_matrix_user.h"
 #endif
 
@@ -75,7 +75,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 // clang-format on
 
 void matrix_init_user(void) {
-#ifdef RGB_MATRIX_ENABLE
+#ifdef RGB_MATRIX_USER_ENABLE
     rgb_matrix_init_user();
 #endif
 }
@@ -99,4 +99,10 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         default:
             return true;  // Process all other keycodes normally
     }
+}
+
+void post_process_record_user(uint16_t keycode, keyrecord_t *record) {
+#ifdef RGB_MATRIX_USER_ENABLE
+    process_rgb_matrix_user(keycode, record);
+#endif
 }

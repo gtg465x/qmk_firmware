@@ -16,5 +16,20 @@
 
 #pragma once
 
-void rgb_matrix_init_user(void);
-void process_rgb_matrix_user(uint16_t keycode, keyrecord_t *record);
+// clang-format off
+
+typedef enum {
+    CAPS_LOCK,
+    FN_LAYER,
+    INDICATOR_TYPE_COUNT
+} indicator_type_t;
+
+// clang-format on
+
+#ifdef INDICATOR_EFFECT_ENABLE
+typedef struct {  // Should this be PACKED?
+    led_point_t point;
+    uint16_t    time;
+    uint16_t    tick;
+} indicator_hit_t;
+#endif

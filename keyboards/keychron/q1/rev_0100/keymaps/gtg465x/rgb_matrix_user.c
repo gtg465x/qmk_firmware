@@ -16,20 +16,84 @@
 
 #include QMK_KEYBOARD_H
 #include "rgb_matrix_user.h"
+#include "rgb_matrix_types_user.h"
 #include "keymap_user.h"
+#include <lib/lib8tion/lib8tion.h>
 
-keypos_t led_index_key_position[DRIVER_LED_TOTAL];
+static keypos_t led_key[DRIVER_LED_TOTAL];
+
+#ifdef INDICATOR_EFFECT_ENABLE
+static keyevent_t      last_keypress;
+static indicator_hit_t indicator_hit[INDICATOR_TYPE_COUNT];
+#endif
 
 void rgb_matrix_init_user(void) {
     for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
         for (uint8_t col = 0; col < MATRIX_COLS; col++) {
-            uint8_t led_index = g_led_config.matrix_co[row][col];
-            if (led_index != NO_LED) {
-                led_index_key_position[led_index] = (keypos_t){.row = row, .col = col};
+            uint8_t led = g_led_config.matrix_co[row][col];
+            if (led != NO_LED) {
+                led_key[led] = (keypos_t){.row = row, .col = col};
             }
         }
     }
 }
+
+void process_rgb_matrix_user(uint16_t keycode, keyrecord_t *record) {
+#ifdef INDICATOR_EFFECT_ENABLE
+    if (record->event.pressed) {
+        last_keypress = record->event;
+    }
+#endif
+}
+
+static void rgb_matrix_set_color_by_keycode(uint8_t led_min, uint8_t led_max, uint8_t layer, bool (*is_keycode)(uint16_t), uint8_t red, uint8_t green, uint8_t blue, indicator_type_t indicator_type) {
+#ifdef INDICATOR_EFFECT_ENABLE
+    indicator_hit_t hit = indicator_hit[indicator_type];
+    if (hit.tick < 255) {
+        if (hit.tick == 0) {
+            uint8_t led = g_led_config.matrix_co[last_keypress.key.row][last_keypress.key.col];
+            hit.point   = g_led_config.point[led];
+            hit.time    = last_keypress.time & ~1;  // QMK sets key event time LSB to 1, which needs to be cleared to prevent underflow of initial elapsed time calculation
+        }
+        uint16_t elapsed_time         = timer_elapsed(hit.time);
+        uint16_t tick                 = scale16by8(elapsed_time, rgb_matrix_config.speed | 1) | 1;  // Set speed and tick LSB to 1 to make sure they are never 0
+        hit.tick                      = tick < 255 ? tick : 255;
+        indicator_hit[indicator_type] = hit;
+    }
+#endif  // INDICATOR_EFFECT_ENABLE
+
+    for (uint8_t i = led_min; i < led_max; i++) {
+        uint16_t keycode = keymap_key_to_keycode(layer, led_key[i]);
+        if ((*is_keycode)(keycode)) {
+#ifdef INDICATOR_EFFECT_ENABLE
+            if (hit.tick < 255) {
+                led_point_t led_point = g_led_config.point[i];
+                int16_t     dx        = led_point.x - hit.point.x;
+                int16_t     dy        = led_point.y - hit.point.y;
+                uint8_t     dist      = sqrt16(dx * dx + dy * dy);
+                if (dist > hit.tick) {
+                    continue;
+                }
+            }
+#endif  // INDICATOR_EFFECT_ENABLE
+            rgb_matrix_set_color(i, red, green, blue);
+        }
+    }
+}
+
+#ifdef CAPS_LOCK_INDICATOR_COLOR
+static bool is_caps_lock_indicator(uint16_t keycode) {
+#    ifdef CAPS_LOCK_INDICATOR_LIGHT_ALPHAS
+    return (KC_A <= keycode && keycode <= KC_Z) || keycode == KC_CAPS;
+#    else   // CAPS_LOCK_INDICATOR_LIGHT_ALPHAS
+    return keycode == KC_CAPS;
+#    endif  // !CAPS_LOCK_INDICATOR_LIGHT_ALPHAS
+}
+#endif
+
+#ifdef FN_LAYER_TRANSPARENT_KEYS_OFF
+static bool is_transparent(uint16_t keycode) { return keycode == KC_TRNS; }
+#endif
 
 void rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
     uint8_t current_layer = get_highest_layer(layer_state);
@@ -38,34 +102,26 @@ void rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
         case WIN_BASE:
 #ifdef CAPS_LOCK_INDICATOR_COLOR
             if (host_keyboard_led_state().caps_lock) {
-                rgb_matrix_set_color_by_keycode(led_min, led_max, current_layer, is_caps_lock_indicator, CAPS_LOCK_INDICATOR_COLOR);
+                rgb_matrix_set_color_by_keycode(led_min, led_max, current_layer, is_caps_lock_indicator, CAPS_LOCK_INDICATOR_COLOR, CAPS_LOCK);
+#    ifdef INDICATOR_EFFECT_ENABLE
+            } else {
+                if (indicator_hit[CAPS_LOCK].tick != 0) {
+                    indicator_hit[CAPS_LOCK].tick = 0;
+                }
+#    endif  // INDICATOR_EFFECT_ENABLE
             }
-#endif
+#endif  // CAPS_LOCK_INDICATOR_COLOR
+#ifdef FN_LAYER_TRANSPARENT_KEYS_OFF
+#    ifdef INDICATOR_EFFECT_ENABLE
+            if (indicator_hit[FN_LAYER].tick != 0) {
+                indicator_hit[FN_LAYER].tick = 0;
+            }
+#    endif  // INDICATOR_EFFECT_ENABLE
             break;
         case MAC_FN:
         case WIN_FN:
-#ifdef FN_LAYER_TRANSPARENT_KEYS_OFF
-            rgb_matrix_set_color_by_keycode(led_min, led_max, current_layer, is_transparent, RGB_OFF);
-#endif
+            rgb_matrix_set_color_by_keycode(led_min, led_max, current_layer, is_transparent, RGB_OFF, FN_LAYER);
+#endif  // FN_LAYER_TRANSPARENT_KEYS_OFF
             break;
     }
 }
-
-void rgb_matrix_set_color_by_keycode(uint8_t led_min, uint8_t led_max, uint8_t layer, bool (*is_keycode)(uint16_t), uint8_t red, uint8_t green, uint8_t blue) {
-    for (uint8_t i = led_min; i < led_max; i++) {
-        uint16_t keycode = keymap_key_to_keycode(layer, led_index_key_position[i]);
-        if ((*is_keycode)(keycode)) {
-            rgb_matrix_set_color(i, red, green, blue);
-        }
-    }
-}
-
-bool is_caps_lock_indicator(uint16_t keycode) {
-#ifdef CAPS_LOCK_INDICATOR_LIGHT_ALPHAS
-    return (KC_A <= keycode && keycode <= KC_Z) || keycode == KC_CAPS;
-#else
-    return keycode == KC_CAPS;
-#endif
-}
-
-bool is_transparent(uint16_t keycode) { return keycode == KC_TRNS; }
