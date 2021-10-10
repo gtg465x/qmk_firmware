@@ -31,5 +31,7 @@ typedef struct {  // Should this be PACKED?
     led_point_t point;
     uint16_t    time;
     uint16_t    tick;
+    uint8_t     max_dist;
+    bool        on;
 } indicator_hit_t;
 #endif
